@@ -1,6 +1,8 @@
 package dio.budgeting.infrastructure.http;
 
+import dio.budgeting.application.GetExpensesSummaryUseCase;
 import dio.budgeting.application.ListTransactionsByCategoryUseCase;
+import dio.budgeting.application.ListTransactionsByPeriodUseCase;
 import dio.budgeting.application.PersistTransactionUseCase;
 import dio.budgeting.domain.Category;
 import dio.budgeting.infrastructure.http.request.TransactionRequest;
@@ -22,55 +24,112 @@ import java.util.List;
 @RestController
 @RequestMapping("/transactions")
 public class TransactionController {
+
     private final PersistTransactionUseCase persistTransactionUseCase;
     private final ListTransactionsByCategoryUseCase listTransactionsByCategoryUseCase;
+    private final ListTransactionsByPeriodUseCase listTransactionsByPeriodUseCase;
+    private final GetExpensesSummaryUseCase getExpensesSummaryUseCase;
 
     private final TranscriptionModel transcriptionModel;
     private final ChatClient chatClient;
     private final TextToSpeechModel textToSpeechModel;
 
-    public TransactionController(PersistTransactionUseCase persistTransactionUseCase,
-                                 ListTransactionsByCategoryUseCase listTransactionsByCategoryUseCase,
-                                 TranscriptionModel transcriptionModel,
-                                 @Value("classpath:prompts/system-message.st") Resource systemPrompt,
-                                 ChatClient.Builder chatClientBuilder,
-                                 TextToSpeechModel textToSpeechModel) throws IOException {
+
+    public TransactionController(
+            PersistTransactionUseCase persistTransactionUseCase,
+            ListTransactionsByCategoryUseCase listTransactionsByCategoryUseCase,
+            ListTransactionsByPeriodUseCase listTransactionsByPeriodUseCase,
+            GetExpensesSummaryUseCase getExpensesSummaryUseCase,
+            TranscriptionModel transcriptionModel,
+            @Value("classpath:prompts/system-message.st") Resource systemPrompt,
+            ChatClient.Builder chatClientBuilder,
+            TextToSpeechModel textToSpeechModel
+    ) throws IOException {
+
         this.persistTransactionUseCase = persistTransactionUseCase;
         this.listTransactionsByCategoryUseCase = listTransactionsByCategoryUseCase;
+        this.listTransactionsByPeriodUseCase = listTransactionsByPeriodUseCase;
+        this.getExpensesSummaryUseCase = getExpensesSummaryUseCase;
+
         this.transcriptionModel = transcriptionModel;
+
         this.chatClient = chatClientBuilder
-                .defaultSystem(systemPrompt.getContentAsString(Charset.defaultCharset()))
-                .defaultTools(persistTransactionUseCase, listTransactionsByCategoryUseCase)
+                .defaultSystem(
+                        systemPrompt.getContentAsString(
+                                Charset.defaultCharset()
+                        )
+                )
+                .defaultTools(
+                        persistTransactionUseCase,
+                        listTransactionsByCategoryUseCase,
+                        listTransactionsByPeriodUseCase,
+                        getExpensesSummaryUseCase
+                )
                 .build();
+
         this.textToSpeechModel = textToSpeechModel;
     }
 
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public TransactionResponse createTransaction(@RequestBody TransactionRequest request) {
-        var transaction = persistTransactionUseCase.execute(request.toInput());
+    public TransactionResponse createTransaction(
+            @RequestBody TransactionRequest request
+    ) {
+
+        var transaction = persistTransactionUseCase.execute(
+                request.toInput()
+        );
+
         return TransactionResponse.from(transaction);
     }
 
+
     @GetMapping("/{category}")
-    public List<TransactionResponse> readTransactions(@PathVariable Category category) {
-        return listTransactionsByCategoryUseCase.execute(category).stream().map(TransactionResponse::from).toList();
+    public List<TransactionResponse> readTransactions(
+            @PathVariable Category category
+    ) {
+
+        return listTransactionsByCategoryUseCase.execute(category)
+                .stream()
+                .map(TransactionResponse::from)
+                .toList();
     }
 
-    @PostMapping(value = "/ai", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = "audio/mp3")
-    ResponseEntity<Resource> transcribe(@RequestParam("file") MultipartFile file) {
-        var userMessage = transcriptionModel.transcribe(file.getResource());
-        var result = chatClient.prompt().user(userMessage).call().content();
+
+    @PostMapping(
+            value = "/ai",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
+            produces = "audio/mp3"
+    )
+    ResponseEntity<Resource> transcribe(
+            @RequestParam("file") MultipartFile file
+    ) {
+
+        var userMessage = transcriptionModel.transcribe(
+                file.getResource()
+        );
+
+        var result = chatClient
+                .prompt()
+                .user(userMessage)
+                .call()
+                .content();
+
 
         byte[] audio = textToSpeechModel.call(result);
+
         var resource = new ByteArrayResource(audio);
 
+
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION,
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment()
                                 .filename("audio.mp3")
                                 .build()
-                                .toString())
+                                .toString()
+                )
                 .body(resource);
     }
 }
